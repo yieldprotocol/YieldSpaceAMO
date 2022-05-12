@@ -27,10 +27,18 @@ import {ICauldron} from "vault-interfaces/ICauldron.sol";
 import {IFraxAMOMinter} from "./interfaces/IFraxAMOMinter.sol";
 import {CastU256U128} from "yield-utils-v2/contracts/cast/CastU256U128.sol";
 import {CastU128I128} from "yield-utils-v2/contracts/cast/CastU128I128.sol";
+import {YieldMath} from "yieldspace-v2/contracts/YieldMath.sol";
+import {Math64x64} from "yieldspace-v2/contracts/Math64x64.sol";
+import {Pool, Exp64x64} from "yieldspace-v2/contracts/Pool.sol";
 
 contract YieldSpaceAMO is Owned {
     using CastU256U128 for uint256;
     using CastU128I128 for uint128;
+    // using Math64x64 for int128;
+    // using Math64x64 for uint128;
+    // using Math64x64 for int256;
+    using Math64x64 for uint256;
+    using Exp64x64 for uint128;
 
     /* =========== CONSTANTS =========== */
     bytes6 public constant FRAX_ILK_ID = 0x313800000000;
@@ -185,6 +193,54 @@ contract YieldSpaceAMO is Owned {
     /// Also useful for testing.
     function seriesIterator() external view returns (bytes6[] memory seriesIterator_) {
         seriesIterator_ = _seriesIterator;
+    }
+
+    /// @notice Returns current pool fyFrax:Frax ratio as fp18
+    /// @param seriesId Id of series to check pool
+    function currentRate(bytes6 seriesId) external view returns (uint256) {
+        return _currentRate(seriesId);
+    }
+
+    function _currentRate(bytes6 seriesId) internal view returns (uint256) {
+        Series storage _series = series[seriesId];
+        (uint128 fyToken, uint128 base, ) = _series.pool.getCache();
+        return (fyToken * 1e18) / base;
+    }
+
+    /// @notice determines the amount of FRAX that would be used to change rates
+    /// ignores FRAX already in the AMO. // TODO: do we want to account for FRAX in the AMO already?
+    /// @param seriesId id of series with pool to adjust rates for
+    /// @param newRate new rate as fp18
+    /// @return fraxAmount
+    // / @return fraxAmountForIncrease Amount of FRAX which will be used to mint fyFrax and increase pool ratio to newRate.
+    // / Neither this number nor the next number account for FRAX currently in the AMO.  TODO: should it?
+    // / @return fraxAmountForDecrease Amount of FRAX which will be sold to decrease rates to newRate
+    // function fraxForNewRate(uint256 newRate) external view returns(uint256 fraxAmountForIncrease, uint256 fraxAmountForDecrease) {
+    function fraxForNewRate(bytes6 seriesId, uint256 newRate) external view returns (uint256 fraxAmount) {
+        //  x1 = current fyFraxReserves (fp18)
+        //  x2 = new fyFraxReserves (fp18)
+        //  y1 = current Frax reserves (fp18)
+        //  y2 = new fyFrax reserves (fp18)
+        //  g  = fees ratio (64bit)
+        //  t = fraction of timeStretch (64bit)
+        //  r = newRate (fp18)
+        //  newFyFraxReserves = ( ( currentFyReserve))
+        //
+        //
+        //      ((   numerator          ) / (        denominator          ))^(1 / (1 - gt))
+        //      ((( termA  ) + ( termB )) / ( 1 + ( termC       )^(1 - gt)))
+        // x2 = ( (x1^(1-gt) + y1^(1-gt)) / ( 1 + ((1 + r)^(1/g))^(1 - gt)))^(1 / (1 - gt))
+        Series storage _series = series[seriesId];
+        int128 g = _series.pool.g1(); // TODO: will have to adjust based on inc or dec
+        uint128 a = YieldMath._computeA(_series.pool.maturity() - uint32(block.timestamp), _series.pool.ts(), g);
+        (uint128 x1, uint128 y1, ) = _series.pool.getCache();
+
+        uint128 termA = x1.pow(a, YieldMath.ONE);
+        uint128 termB = y1.pow(a, YieldMath.ONE);
+        uint128 numerator = termA + termB;
+        uint128 termC = (YieldMath.ONE + uint128(newRate.fromUInt())).pow(YieldMath.ONE, uint128(g));
+        uint128 denominator = YieldMath.ONE + termC.pow(a, YieldMath.ONE);
+        fraxAmount = (numerator / denominator).pow(YieldMath.ONE, a);
     }
 
     /* ========= RESTRICTED FUNCTIONS ======== */
