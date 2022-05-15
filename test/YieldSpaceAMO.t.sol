@@ -13,6 +13,7 @@ import {FraxVaultMock} from "./mocks/FraxVaultMock.sol";
 import {AMOMinterMock} from "./mocks/AMOMinterMock.sol";
 import {DataTypes} from "vault-interfaces/DataTypes.sol";
 import {YieldMath} from "yieldspace-v2/contracts/YieldMath.sol";
+import {Math64x64} from "yieldspace-v2/contracts/Math64x64.sol";
 import {IERC20} from "yield-utils-v2/contracts/token/IERC20.sol";
 import {SafeERC20Namer} from "yield-utils-v2/contracts/token/SafeERC20Namer.sol";
 
@@ -38,6 +39,9 @@ import {SafeERC20Namer} from "yield-utils-v2/contracts/token/SafeERC20Namer.sol"
 //         X warp to maturity and check views
 
 abstract contract ZeroState is Test {
+    using Math64x64 for uint256;
+    using Math64x64 for int128;
+
     FraxVaultMock public yield;
     FraxMock public base;
     YieldSpaceAMO public amo;
@@ -49,9 +53,10 @@ abstract contract ZeroState is Test {
     uint32 public maturity0; //  80 days from today;
     uint32 public maturity1; //  170 days from today;
 
-    int128 public constant ts = 14613551152;
-    int128 public constant g1 = 13835058055282163712;
-    int128 public constant g2 = 24595658764946068821;
+    int128 public ts;
+    int128 public constant g1 = 17524406870024074035;
+    int128 public constant g2 = 19417625340746888671;
+    uint256 public u;
 
     address public constant owner = address(0xB0B);
 
@@ -63,6 +68,10 @@ abstract contract ZeroState is Test {
 
     function setUp() public virtual {
         uint32 day = 24 * 60 * 60;
+        uint256 year = day * 365;
+        u = 40;
+        uint256 totalTimestretch = u * year;
+        ts = int128(YieldMath.ONE).div(totalTimestretch.fromUInt());
         maturity0 = uint32(block.timestamp) + 80 * day;
         maturity0 = uint32(block.timestamp) + 170 * day;
         vm.label(owner, "Bob (owner)");
@@ -647,6 +656,23 @@ abstract contract WithLiquidityAddedToAMM is WithTwoSeriesAdded {
 }
 
 contract YieldSpaceAMO_WithLiquidityAddedToAMM is WithLiquidityAddedToAMM {
+
+    /* fraxForNewRate()
+     ******************************************************************************************************************/
+
+    function testUnit_fraxForNewRate() public {
+        console.log("current rate", amo.currentRate(series0Id));
+        console.log("fraxForNewRate", amo.fraxForNewRate(series0Id, 1e17));
+    }
+
+    function testGetTs() public {
+        console.log(amo.getU(series0Id));
+    }
+
+    function testGetG1() public {
+        console.log(amo.getG1(series0Id));
+    }
+
     /* addLiquidity()
      ******************************************************************************************************************/
 
